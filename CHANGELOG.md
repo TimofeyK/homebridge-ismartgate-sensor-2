@@ -6,3 +6,8 @@ Update
 -  updated dependancies
 -  replaced depricated node modules
 -  removed mdns config due to vulnerability
+
+## 1.4.4
+Update
+-  support for node 24
+-  deprecated node 18
