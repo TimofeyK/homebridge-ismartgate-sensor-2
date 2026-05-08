@@ -1,236 +1,210 @@
-let axios = require('axios')
-//mdns = require('mdns-js'); ///"mdns-js": "^1.0.3",
+const pluginPackage = require('./package.json')
 
-var API, Accessory, Characteristic, Service
+let Characteristic
+let Service
+
+const PLUGIN_NAME = 'homebridge-ismartgate-sensor'
+const ACCESSORY_NAME = 'iSmartGate'
 
 module.exports = function (homebridge) {
-	API = homebridge
-	Accessory = homebridge.hap.Accessory
 	Characteristic = homebridge.hap.Characteristic
 	Service = homebridge.hap.Service
-
-	homebridge.registerAccessory('homebridge-ismartgate-sensor', 'iSmartGate', iSmartGate)
+	homebridge.registerAccessory(PLUGIN_NAME, ACCESSORY_NAME, ISmartGateAccessory)
 }
 
-function iSmartGate(log, config) {
-	this.log = log
-	this.name = config['name'] || 'iSmartGate Temperature'
-	this.username = config['username']
-	this.password = config['password']
-	this.hostname = config['hostname']
-	this.response = null
-	this.cookie = null
+class ISmartGateAccessory {
+	constructor(log, config) {
+		this.log = log
+		this.name = config.name || 'iSmartGate Temperature'
+		this.username = config.username
+		this.password = config.password
+		this.hostname = config.hostname
+		this.cookie = null
+		this.currentTemperature = null
+		this.batteryLevel = null
+		this.refreshInFlight = false
+		this.refreshTimer = null
+		this.loginTimer = null
+		this.isConfigured = Boolean(this.username && this.password && this.hostname)
+		if (!this.isConfigured) {
+			this.log.error('Missing required configuration: username, password, and hostname are required.')
+		}
+	}
 
-	this.CurrentTemperature = null
-	this.BatteryLevel = null
-}
-
-iSmartGate.prototype = {
-	identify: function (callback) {
-		this.log.info('identify')
-		callback()
-	},
-
-	getServices: function () {
-		// Temperature Sensor service
+	getServices() {
 		this.TemperatureSensor = new Service.TemperatureSensor(this.name)
-
-		// Battery service
 		this.BatteryService = new Service.Battery(this.name)
-
-		// Accessory Information service
 		this.AccessoryInformation = new Service.AccessoryInformation()
 		this.AccessoryInformation.setCharacteristic(Characteristic.Name, this.name)
 			.setCharacteristic(Characteristic.Manufacturer, 'iSmartGate')
-			.setCharacteristic(Characteristic.Model, 'Temperature')
-			.setCharacteristic(Characteristic.FirmwareRevision, '1.4.2')
-			.setCharacteristic(Characteristic.SerialNumber, this.username)
+			.setCharacteristic(Characteristic.Model, 'Temperature Sensor')
+			.setCharacteristic(Characteristic.FirmwareRevision, pluginPackage.version)
+			.setCharacteristic(Characteristic.SerialNumber, this.hostname || this.username || this.name)
 
-		/*
-		// Start searching for the iSmartGate using mDNS
-		var browser = mdns.createBrowser("_hap._tcp");
-		browser.on('ready', function() { browser.discover(); });
-		browser.on('update', function(data) {
-			if(data['txt']) {
-				data['txt'].forEach(txt => {
-					txt = txt.split("=");
-					if(txt[0] == "md" && txt[1] == "iSmartGate" && data.addresses[0] != this.hostname) {
-						// Set the new hostname obtained from mDNS
-						this.hostname = data.addresses[0];
-						this.log.info("Found an iSmartGate at", this.hostname);
+		this.TemperatureSensor.getCharacteristic(Characteristic.CurrentTemperature).onGet(this.handleCurrentTemperatureGet.bind(this))
+		this.BatteryService.getCharacteristic(Characteristic.BatteryLevel).onGet(this.handleBatteryLevelGet.bind(this))
+		this.BatteryService.getCharacteristic(Characteristic.StatusLowBattery).onGet(this.handleBatteryStatusGet.bind(this))
 
-						// Login to the iSmartGate for the first time and refresh
-						setTimeout(function() {
-							this._login();
-						}.bind(this), 2500);
-					}
-				});
-			}
-		}.bind(this));
-*/
+		if (this.isConfigured) {
+			this.startPolling()
+		}
 
-		// Login to the iSmartGate for the first time and refresh
-		setTimeout(
-			function () {
-				this.response = this._login()
-			}.bind(this),
-			2500
-		)
-
-		setTimeout(
-			function () {
-				this._refresh()
-			}.bind(this),
-			5000
-		)
-
-		// Set a timer to refresh the data every 10 minutes
-		setInterval(
-			function () {
-				this._refresh()
-			}.bind(this),
-			600000
-		)
-
-		// Set a timer to refresh the login token every 3 hours
-		setInterval(
-			function () {
-				this.response = this._login()
-			}.bind(this),
-			10800000
-		)
-
-		// Return the Accessory
 		return [this.AccessoryInformation, this.TemperatureSensor, this.BatteryService]
-	},
+	}
 
-	_login: async function () {
+	startPolling() {
+		void this.login()
+			.then(() => this.refresh())
+			.catch(err => this.log.error('Initial setup failed for %s: %s', this.hostname, err.message))
+		this.refreshTimer = setInterval(() => {
+			void this.refresh().catch(err => this.log.error('Refresh failed for %s: %s', this.hostname, err.message))
+		}, 600000)
+		this.loginTimer = setInterval(() => {
+			void this.login().catch(err => this.log.error('Login refresh failed for %s: %s', this.hostname, err.message))
+		}, 10800000)
+	}
+
+	async handleCurrentTemperatureGet() {
+		if (this.currentTemperature === null) {
+			throw new Error('Current temperature is not available yet.')
+		}
+		return this.currentTemperature
+	}
+
+	async handleBatteryLevelGet() {
+		if (this.batteryLevel === null) {
+			throw new Error('Battery level is not available yet.')
+		}
+		return this.batteryLevel
+	}
+
+	async handleBatteryStatusGet() {
+		if (this.batteryLevel === null) {
+			throw new Error('Battery level is not available yet.')
+		}
+		return this.batteryLevel <= 10 ? Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
+	}
+
+	async login() {
+		this.log.info('Retrieving token for %s', this.hostname)
 		try {
-			this.log.info('Retrieving token')
-			let response = await axios({
-				withCredentials: true,
-				method: 'post',
-				url: `http://${this.hostname}/index.php`,
+			const body = new URLSearchParams({
+				login: this.username,
+				pass: this.password,
+				'send-login': 'Sign in',
+			})
+			const response = await fetch(`http://${this.hostname}/index.php`, {
+				method: 'POST',
 				headers: {
 					'Content-Type': 'application/x-www-form-urlencoded',
-					'Accept-Encoding': 'gzip,deflate,compress',
 				},
-				data: {
-					'MIME Type': 'application/x-www-form-urlencoded',
-					login: this.username,
-					pass: this.password,
-					'send-login': 'Sign in',
-				},
-				responseType: 'text',
-			}).catch(err => {
-				this.log.debug(JSON.stringify(err, null, 2))
-				this.log.error('Error signing in and getting token %s', err.message)
-				if (err.response) {
-					this.log.warn(JSON.stringify(err.response.data, null, 2))
-				}
-				return err.response
+				body,
 			})
-			if (response.status == 200) {
-				this.log.info('Logged into iSmartGate succesfully')
-				this.log.debug('signin response', response.headers)
-				this.cookie = response.headers['set-cookie']
-				return response
+			if (!response.ok) {
+				const responseBody = await response.text().catch(() => '')
+				this.log.error('Error signing in to %s: HTTP %s', this.hostname, response.status)
+				if (responseBody) {
+					this.log.debug(responseBody)
+				}
+				return
 			}
+			const rawCookie = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie()[0] : response.headers.get('set-cookie')
+			if (typeof rawCookie !== 'string' || !rawCookie.trim()) {
+				this.log.error('Logged in to %s but did not receive session cookie.', this.hostname)
+				return
+			}
+			this.cookie = rawCookie.split(';')[0]
+			this.log.info('Logged into iSmartGate successfully for %s', this.hostname)
 		} catch (err) {
-			this.log.error('Error retrieving token \n%s', err)
+			this.log.error('Error signing in to %s: %s', this.hostname, err.message)
 		}
-	},
+	}
 
-	_refresh: async function () {
+	async refresh() {
+		if (this.refreshInFlight) {
+			return
+		}
+		this.refreshInFlight = true
 		try {
+			if (!this.cookie) {
+				await this.login()
+			}
+			if (!this.cookie) {
+				this.log.warn('Skipping refresh for %s because no session cookie is available.', this.hostname)
+				return
+			}
+
 			this.log.debug('Start refreshing temperature & battery')
-			let response = await axios({
-				withCredentials: true,
-				method: 'get',
-				url: `http://${this.hostname}/isg/temperature.php`,
+			const response = await fetch(`http://${this.hostname}/isg/temperature.php?door=1`, {
+				method: 'GET',
 				headers: {
 					Cookie: this.cookie,
 				},
-				params: {
-					door: 1,
-				},
-				responseType: 'json',
-			}).catch(err => {
-				this.log.debug(JSON.stringify(err, null, 2))
-				this.log.error('Error fetching temperature & battery %s', err.message)
-				if (err.response) {
-					this.log.warn(JSON.stringify(err.response.data, null, 2))
-				}
-				return err.response
 			})
-			if (response.status == 200 && Array.isArray(response.data)) {
-				this.log.debug('Obtained status.', response.data)
-
-				// Find the CurrentTemperature
-				this.CurrentTemperature = response.data[0] / 1000
-
-				// Find the BatteryLevel
-				switch (response.data[1]) {
-					case 'full':
-						this.BatteryLevel = 100
-						break
-					case '80':
-						this.BatteryLevel = 80
-						break
-					case '60':
-						this.BatteryLevel = 60
-						break
-					case '40':
-						this.BatteryLevel = 40
-						break
-					case '20':
-						this.BatteryLevel = 20
-						break
-					case 'low':
-						this.BatteryLevel = 10
-						break
-
-					default:
-						this.log.warn('Unexpected BatteryLevel detected.', response.data)
-						this.BatteryLevel = 0
-						break
+			const body = await response.text()
+			if (!response.ok) {
+				this.log.error('Error fetching temperature & battery from %s. HTTP %s', this.hostname, response.status)
+				if (body) {
+					this.log.debug(body)
 				}
-
-				// Set the Current Temperature
-				this.TemperatureSensor.getCharacteristic(Characteristic.CurrentTemperature).updateValue(this.CurrentTemperature)
-
-				// Set the Battery Level
-				this.BatteryService.setCharacteristic(Characteristic.BatteryLevel, this.BatteryLevel)
-
-				// Set the Status Low Battery
-				if (this.BatteryLevel <= 10) {
-					this.BatteryService.setCharacteristic(Characteristic.StatusLowBattery, Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW)
-				} else {
-					this.BatteryService.setCharacteristic(Characteristic.StatusLowBattery, Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL)
-				}
-				return response
-			} else {
-				if (response.data == 'Restricted Access') {
-					this.log.error('Restricted Access', response.data)
-				} else if (response.data == 'Login Token Expired') {
-					this.log.error('Login Token Expired', response.data)
-				} else {
-					this.log.error('Could not connect.', 'Check http://' + this.hostname + ' to make sure the device is still reachable & no captcha is showing.')
-					this.log.error(response.data)
-				}
+				return
 			}
+
+			const normalizedBody = body.trim()
+			if (normalizedBody.includes('Restricted Access') || normalizedBody.includes('Login Token Expired')) {
+				this.log.error(normalizedBody)
+				if (normalizedBody.includes('Login Token Expired')) {
+					this.cookie = null
+				}
+				return
+			}
+
+			let payload
+			try {
+				payload = JSON.parse(body)
+			} catch (err) {
+				this.log.error('Unexpected non-JSON response while reading temperature & battery from %s.', this.hostname)
+				this.log.debug(body)
+				return
+			}
+
+			if (!Array.isArray(payload) || payload.length < 2) {
+				this.log.warn('Unexpected payload received from iSmartGate.')
+				this.log.debug(JSON.stringify(payload))
+				return
+			}
+
+			const parsedTemperature = Number(payload[0]) / 1000
+			if (Number.isFinite(parsedTemperature)) {
+				this.currentTemperature = parsedTemperature
+				this.TemperatureSensor.updateCharacteristic(Characteristic.CurrentTemperature, this.currentTemperature)
+			} else {
+				this.log.warn('Unexpected temperature value received: %s', payload[0])
+			}
+
+			const batteryMap = {
+				full: 100,
+				'80': 80,
+				'60': 60,
+				'40': 40,
+				'20': 20,
+				low: 10,
+			}
+			const mappedBattery = batteryMap[payload[1]]
+			this.batteryLevel = typeof mappedBattery === 'number' ? mappedBattery : 0
+			if (typeof mappedBattery !== 'number') {
+				this.log.warn('Unexpected BatteryLevel detected: %s', payload[1])
+			}
+
+			this.BatteryService.updateCharacteristic(Characteristic.BatteryLevel, this.batteryLevel)
+			this.BatteryService.updateCharacteristic(
+				Characteristic.StatusLowBattery,
+				this.batteryLevel <= 10 ? Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
+			)
 		} catch (err) {
-			this.log.error('Error retrieving temperature & battery \n%s', err)
+			this.log.error('Error retrieving temperature & battery %s', err.message)
+		} finally {
+			this.refreshInFlight = false
 		}
-	},
-
-	_getValue: function (CharacteristicName, callback) {
-		this.log.debug('GET', CharacteristicName)
-		callback(null)
-	},
-
-	_setValue: function (CharacteristicName, value, callback) {
-		this.log.debug('SET', CharacteristicName, value)
-		callback()
-	},
+	}
 }

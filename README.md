@@ -7,6 +7,8 @@ Forked from [homebridge-ismartgate](https://github.com/codyc1515/homebridge-isma
 * Supports only a single garage door / gate
 * Only exposes the Temperature & Battery services, as the device already has HomeKit support for the Garage Door service. If you need a Garage Door service as well, take a look at the plug-in [homebridge-gogogate2](https://www.npmjs.com/package/homebridge-gogogate2).
 * Only the iSmartGate Gate Lite is supported. While no other devices have been tested, I see no reason that they should not work.
+* This plugin uses the device API over plain HTTP with username/password form login because this is how the iSmartGate local API works.
+* Targets Homebridge 2.x.
 
 ### Legal
 * Licensed under [MIT](LICENSE)

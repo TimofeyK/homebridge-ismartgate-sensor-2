@@ -3,14 +3,12 @@
   "displayName": "ismartgate sensor",
   "version": "1.4.4",
   "author": "John Valiquette",
-  "dependencies": {
-    "axios": "^1.7.7"
-  },
+  "dependencies": {},
   "deprecated": false,
   "description": "Homebridge plug-in for iSmartGate HomeKit devices to expose their Temperature & Battery sensor, which would otherwise be hidden.",
   "engines": {
-		"homebridge": "^1.11.0 || ^2.0.0-beta.0",
-		"node": "^20.19.0 || ^22.19.0 ||^24.11.0"
+		"homebridge": "^2.0.0",
+		"node": "^24.11.0"
   },
   "keywords": [
     "homebridge-plugin",
@@ -24,15 +22,15 @@
   ],
   "license": "MIT",
   "main": "index.js",
-  "homepage": "https://github.com/valiquette/homebridge-ismartgate-sensor/blob/master/README.md",
+  "homepage": "https://github.com/TimofeyK/homebridge-ismartgate-sensor-2#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/valiquette/homebridge-ismartgate-sensor"
+    "url": "git+https://github.com/TimofeyK/homebridge-ismartgate-sensor-2.git"
   },
   "bugs": {
-    "url": "https://github.com/codyc1515/homebridge-ismartgate/issues"
+    "url": "https://github.com/TimofeyK/homebridge-ismartgate-sensor-2/issues"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --check index.js"
   }
 }
