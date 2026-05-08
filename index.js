@@ -62,48 +62,52 @@ class ISmartGateAccessory {
 		}, 10800000)
 	}
 
-	handleCurrentTemperatureGet() {
+	async handleCurrentTemperatureGet() {
 		return this.currentTemperature
 	}
 
-	handleBatteryLevelGet() {
+	async handleBatteryLevelGet() {
 		return this.batteryLevel
 	}
 
-	handleBatteryStatusGet() {
+	async handleBatteryStatusGet() {
 		return this.batteryLevel <= 10 ? Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
 	}
 
 	async login() {
-		this.log.info('Retrieving token')
-		const body = new URLSearchParams({
-			login: this.username,
-			pass: this.password,
-			'send-login': 'Sign in',
-		})
-		const response = await fetch(`http://${this.hostname}/index.php`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/x-www-form-urlencoded',
-			},
-			body,
-		})
-		if (!response.ok) {
-			const responseBody = await response.text().catch(() => '')
-			this.log.error('Error signing in and getting token. HTTP %s', response.status)
-			if (responseBody) {
-				this.log.debug(responseBody)
+		this.log.info('Retrieving token for %s', this.hostname)
+		try {
+			const body = new URLSearchParams({
+				login: this.username,
+				pass: this.password,
+				'send-login': 'Sign in',
+			})
+			const response = await fetch(`http://${this.hostname}/index.php`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/x-www-form-urlencoded',
+				},
+				body,
+			})
+			if (!response.ok) {
+				const responseBody = await response.text().catch(() => '')
+				this.log.error('Error signing in to %s: HTTP %s', this.hostname, response.status)
+				if (responseBody) {
+					this.log.debug(responseBody)
+				}
+				return
 			}
-			return
+			const cookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : []
+			const rawCookie = cookies[0] || response.headers.get('set-cookie')
+			if (!rawCookie) {
+				this.log.error('Logged in to %s but did not receive session cookie.', this.hostname)
+				return
+			}
+			this.cookie = rawCookie.split(';')[0]
+			this.log.info('Logged into iSmartGate successfully for %s', this.hostname)
+		} catch (err) {
+			this.log.error('Error signing in to %s: %s', this.hostname, err.message)
 		}
-		const cookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : []
-		const rawCookie = cookies[0] || response.headers.get('set-cookie')
-		if (!rawCookie) {
-			this.log.error('Logged in but did not receive session cookie.')
-			return
-		}
-		this.cookie = rawCookie.split(';')[0]
-		this.log.info('Logged into iSmartGate successfully')
 	}
 
 	async refresh() {
@@ -128,7 +132,7 @@ class ISmartGateAccessory {
 			})
 			const body = await response.text()
 			if (!response.ok) {
-				this.log.error('Error fetching temperature & battery. HTTP %s', response.status)
+				this.log.error('Error fetching temperature & battery from %s. HTTP %s', this.hostname, response.status)
 				if (body) {
 					this.log.debug(body)
 				}
@@ -147,7 +151,7 @@ class ISmartGateAccessory {
 			try {
 				payload = JSON.parse(body)
 			} catch (err) {
-				this.log.error('Unexpected response while reading temperature & battery.')
+				this.log.error('Unexpected non-JSON response while reading temperature & battery from %s.', this.hostname)
 				this.log.debug(body)
 				return
 			}
