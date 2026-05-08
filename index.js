@@ -53,12 +53,14 @@ class ISmartGateAccessory {
 	}
 
 	startPolling() {
-		void this.login().then(() => this.refresh())
+		void this.login()
+			.then(() => this.refresh())
+			.catch(err => this.log.error('Initial setup failed for %s: %s', this.hostname, err.message))
 		this.refreshTimer = setInterval(() => {
-			void this.refresh()
+			void this.refresh().catch(err => this.log.error('Refresh failed for %s: %s', this.hostname, err.message))
 		}, 600000)
 		this.loginTimer = setInterval(() => {
-			void this.login()
+			void this.login().catch(err => this.log.error('Login refresh failed for %s: %s', this.hostname, err.message))
 		}, 10800000)
 	}
 
@@ -97,8 +99,7 @@ class ISmartGateAccessory {
 				}
 				return
 			}
-			const cookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : []
-			const rawCookie = cookies[0] || response.headers.get('set-cookie')
+			const rawCookie = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie()[0] : response.headers.get('set-cookie')
 			if (!rawCookie) {
 				this.log.error('Logged in to %s but did not receive session cookie.', this.hostname)
 				return
@@ -120,6 +121,7 @@ class ISmartGateAccessory {
 				await this.login()
 			}
 			if (!this.cookie) {
+				this.log.warn('Skipping refresh for %s because no session cookie is available.', this.hostname)
 				return
 			}
 
