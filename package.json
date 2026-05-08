@@ -8,7 +8,7 @@
   "description": "Homebridge plugin for iSmartGate devices to expose their Temperature and Battery sensors, which are otherwise hidden from HomeKit.",
   "engines": {
 		"homebridge": "^2.0.0",
-		"node": "^24.11.0"
+		"node": ">=22.0.0"
   },
   "keywords": [
     "homebridge-plugin",
