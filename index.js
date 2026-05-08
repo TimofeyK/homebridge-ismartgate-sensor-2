@@ -20,8 +20,8 @@ class ISmartGateAccessory {
 		this.password = config.password
 		this.hostname = config.hostname
 		this.cookie = null
-		this.currentTemperature = 0
-		this.batteryLevel = 0
+		this.currentTemperature = null
+		this.batteryLevel = null
 		this.refreshInFlight = false
 		this.refreshTimer = null
 		this.loginTimer = null
@@ -65,14 +65,23 @@ class ISmartGateAccessory {
 	}
 
 	async handleCurrentTemperatureGet() {
+		if (this.currentTemperature === null) {
+			throw new Error('Current temperature is not available yet.')
+		}
 		return this.currentTemperature
 	}
 
 	async handleBatteryLevelGet() {
+		if (this.batteryLevel === null) {
+			throw new Error('Battery level is not available yet.')
+		}
 		return this.batteryLevel
 	}
 
 	async handleBatteryStatusGet() {
+		if (this.batteryLevel === null) {
+			throw new Error('Battery level is not available yet.')
+		}
 		return this.batteryLevel <= 10 ? Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
 	}
 
@@ -100,7 +109,7 @@ class ISmartGateAccessory {
 				return
 			}
 			const rawCookie = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie()[0] : response.headers.get('set-cookie')
-			if (!rawCookie) {
+			if (typeof rawCookie !== 'string' || !rawCookie.trim()) {
 				this.log.error('Logged in to %s but did not receive session cookie.', this.hostname)
 				return
 			}
@@ -141,9 +150,10 @@ class ISmartGateAccessory {
 				return
 			}
 
-			if (body === 'Restricted Access' || body === 'Login Token Expired') {
-				this.log.error(body)
-				if (body === 'Login Token Expired') {
+			const normalizedBody = body.trim()
+			if (normalizedBody.includes('Restricted Access') || normalizedBody.includes('Login Token Expired')) {
+				this.log.error(normalizedBody)
+				if (normalizedBody.includes('Login Token Expired')) {
 					this.cookie = null
 				}
 				return
